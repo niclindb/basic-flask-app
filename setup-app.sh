@@ -180,25 +180,29 @@ fi
 {
     echo "server {"
     echo "    listen 80;"
+    
     for app_file in "$APP_REGISTRY"/*; do
         [ -f "$app_file" ] || continue
+        
+        # Internal Field Separator for reading the registry file
         IFS=':' read -r name type val wport < "$app_file"
         
-        # Webhook Location
+        echo ""
+        echo "    # Webhook Location for $name"
         echo "    location /webhook-$name {"
         echo "        proxy_pass http://127.0.0.1:$wport/webhook;"
         echo "    }"
 
-        # App Location
+        echo "    # App Location for $name"
         echo "    location /$name/ {"
         if [[ "$type" == "static" ]]; then
-            echo "        alias $val/;"
+            echo "        alias ${val%/}/;" 
             echo "        try_files \$uri \$uri/ /$name/index.html;"
         else
             echo "        proxy_pass http://127.0.0.1:$val/;"
             echo "        proxy_set_header Host \$host;"
-            echo "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
-            echo "        proxy_set_header X-Forwarded-Proto $scheme;"
+            echo "        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
+            echo "        proxy_set_header X-Forwarded-Proto \$scheme;"
             echo "        proxy_set_header X-Forwarded-Prefix /$name;"
             echo "        proxy_set_header X-Real-IP \$remote_addr;"
         fi
