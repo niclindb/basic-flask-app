@@ -63,6 +63,9 @@ To see which apps are assigned to which ports:
     The script will fail if it uses a database
     #flask
       if you are using flask you need to have a app.py file in the root of the repository
+      if you have routes use the following
+      from werkzeug.middleware.proxy_fix import ProxyFix
+      app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_prefix=1)
 
 ## TODO
     if .env file is present use it.
