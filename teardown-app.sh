@@ -57,6 +57,10 @@ if [ -d "$APP_REGISTRY" ] && [ "$(ls -A $APP_REGISTRY)" ]; then
             else
                 echo "        proxy_pass http://127.0.0.1:$val/;"
                 echo "        proxy_set_header Host \$host;"
+                echo "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;"
+                echo "        proxy_set_header X-Forwarded-Proto $scheme;"
+                echo "        proxy_set_header X-Forwarded-Prefix /$name;"
+                echo "        proxy_set_header X-Real-IP \$remote_addr;"
             fi
             echo "    }"
         done
