@@ -1,7 +1,7 @@
 #!/bin/bash
 # ─────────────────────────────────────────────
 # Universal Web App Deployment Script (Revised)
-# Supports: Flask, FastAPI, Django, Node.js, React, Static
+# Supports: Flask, React, Static
 # ─────────────────────────────────────────────
 
 set -e
@@ -13,8 +13,8 @@ fi
 
 # ── Prompt for config ─────────────────────────
 read -p "App name (e.g. myapp): " APP_NAME
-echo -e "\nFramework options:\n 1) Flask\n 2) FastAPI\n 3) Django\n 4) Node.js\n 5) React\n 6) Static site"
-read -p "Choose framework (1-6): " FRAMEWORK_CHOICE
+echo -e "\nFramework options:\n 1) Flask\n 2) React\n 3) Static site"
+read -p "Choose framework (1-3): " FRAMEWORK_CHOICE
 read -p "GitHub repo URL: " REPO_URL
 read -p "Linux user (e.g. webuser): " APP_USER
 read -p "Webhook secret: " WEBHOOK_SECRET
@@ -26,11 +26,8 @@ VENV="$APP_DIR/venv"
 
 case $FRAMEWORK_CHOICE in
     1) FRAMEWORK="flask" ;;
-    2) FRAMEWORK="fastapi" ;;
-    3) FRAMEWORK="django" ;;
-    4) FRAMEWORK="nodejs" ;;
-    5) FRAMEWORK="react" ;;
-    6) FRAMEWORK="static" ;;
+    2) FRAMEWORK="react" ;;
+    3) FRAMEWORK="static" ;;
     *) echo "Invalid choice"; exit 1 ;;
 esac
 
@@ -44,7 +41,7 @@ get_next_port() {
 }
 
 WEBHOOK_PORT=$(get_next_port 9000)
-[[ "$FRAMEWORK" =~ ^(flask|fastapi|django|nodejs)$ ]] && APP_PORT=$(get_next_port 5000)
+[[ "$FRAMEWORK" =~ ^(flask)$ ]] && APP_PORT=$(get_next_port 5000)
 
 # ── 1. Dependencies ───────────────────────────
 echo "[1/6] Installing dependencies..."
@@ -53,7 +50,7 @@ apt update -qq && apt install -y git nginx curl python3 python3-pip python3-venv
 # Install Flask globally for the webhook (handling PEP 668)
 pip3 install flask --break-system-packages -q 2>/dev/null || pip3 install flask -q
 
-if [[ "$FRAMEWORK" =~ ^(nodejs|react)$ ]]; then
+if [[ "$FRAMEWORK" =~ ^(react)$ ]]; then
     if ! command -v node &>/dev/null; then
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null
         apt install -y nodejs > /dev/null
@@ -77,7 +74,7 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 echo "[4/6] Configuring framework..."
 
 case $FRAMEWORK in
-    flask|fastapi|django)
+    flask)
         python3 -m venv "$VENV"
         chown -R "$APP_USER:$APP_USER" "$VENV"
         SUDO_PIP="sudo -u $APP_USER $VENV/bin/pip install -q"
@@ -86,25 +83,10 @@ case $FRAMEWORK in
         if [[ "$FRAMEWORK" == "flask" ]]; then
             $SUDO_PIP flask gunicorn
             EXEC_CMD="$VENV/bin/gunicorn --bind 127.0.0.1:$APP_PORT app:app"
-        elif [[ "$FRAMEWORK" == "fastapi" ]]; then
-            $SUDO_PIP fastapi uvicorn
-            EXEC_CMD="$VENV/bin/uvicorn main:app --host 127.0.0.1 --port $APP_PORT"
-        elif [[ "$FRAMEWORK" == "django" ]]; then
-            $SUDO_PIP django gunicorn
-            read -p "Django project name (folder with wsgi.py): " DJANGO_PROJ
-            EXEC_CMD="$VENV/bin/gunicorn ${DJANGO_PROJ}.wsgi --bind 127.0.0.1:$APP_PORT"
         fi
         [ -f "$APP_DIR/requirements.txt" ] && $SUDO_PIP -r "$APP_DIR/requirements.txt"
         DEPLOY_CMD="git -C $APP_DIR pull && sudo systemctl restart $APP_NAME"
         ;;
-
-    nodejs)
-        cd "$APP_DIR" && sudo -u "$APP_USER" npm install --silent
-        read -p "Entry file (e.g. index.js): " NODE_ENTRY
-        EXEC_CMD="/usr/bin/node $NODE_ENTRY"
-        DEPLOY_CMD="git -C $APP_DIR pull && npm --prefix $APP_DIR install && sudo systemctl restart $APP_NAME"
-        ;;
-
     react)
         cd "$APP_DIR"
         sudo -u "$APP_USER" npm install --silent
@@ -113,7 +95,6 @@ case $FRAMEWORK in
         [ -d "$APP_DIR/dist" ] && STATIC_PATH="$APP_DIR/dist" || STATIC_PATH="$APP_DIR/build"
         DEPLOY_CMD="git -C $APP_DIR pull && npm --prefix $APP_DIR install && npm --prefix $APP_DIR run build"
         ;;
-
     static)
         STATIC_PATH="$APP_DIR"
         DEPLOY_CMD="git -C $APP_DIR pull"
@@ -233,3 +214,10 @@ echo " URL: http://$(curl -s ifconfig.me)/$APP_NAME/"
 echo " Webhook: http://$(curl -s ifconfig.me)/webhook-$APP_NAME"
 echo " Secret: $WEBHOOK_SECRET"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "To set up automatic deployment"
+echo "1. go to the repo settings"
+echo "2. Webhooks -> Add webhook"
+echo "3. paste URL, set content type to application/json, and paste the secret"
+echo "4. then add webhook"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "To remove the site run the teardown-app.sh file"
