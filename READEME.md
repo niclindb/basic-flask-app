@@ -10,6 +10,10 @@ This script automates the deployment of Flask, FastAPI, Django, Node.js, and Rea
 
 ## Quick Start
 1. **Run the script**:
+   change permissoins on the file
+   ```bash
+   chmod +x setup-app.sh
+   ```
    ```bash
    sudo ./setup-app.sh
    ```
@@ -21,7 +25,6 @@ This script automates the deployment of Flask, FastAPI, Django, Node.js, and Rea
 
 ## Post-Install Checklist
 - **SSL**: Install Certbot (`sudo apt install certbot python3-certbot-nginx && sudo certbot --nginx`) to enable HTTPS.
-- **Django**: Update `ALLOWED_HOSTS` in `settings.py` with your server IP/Domain.
 - **React**: Ensure `"homepage": "/app-name"` is in `package.json` if using subpaths.
 - **Firewall**: Ensure ports 80 (HTTP) and 443 (HTTPS) are open.
 
@@ -58,6 +61,8 @@ To see which apps are assigned to which ports:
     GitHub repository must be public
 
     The script will fail if it uses a database
+    #flask
+      if you are using flask you need to have a app.py file in the root of the repository
 
 ## TODO
     if .env file is present use it.
