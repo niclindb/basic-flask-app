@@ -179,7 +179,8 @@ fi
 # Rebuild Nginx Unified Config
 {
     echo "server {"
-    echo "    listen 80;"
+    echo "    listen 80 default_server;"
+    echo "    server_name _;"
     
     for app_file in "$APP_REGISTRY"/*; do
         [ -f "$app_file" ] || continue
@@ -201,10 +202,8 @@ fi
         else
             echo "        proxy_pass http://127.0.0.1:$val/;"
             echo "        proxy_set_header Host \$host;"
-            echo "        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
-            echo "        proxy_set_header X-Forwarded-Proto \$scheme;"
             echo "        proxy_set_header X-Forwarded-Prefix /$name;"
-            echo "        proxy_set_header X-Real-IP \$remote_addr;"
+            echo "        proxy_set_header X-Real-IP \$remote_addr;"    
         fi
         echo "    }"
     done

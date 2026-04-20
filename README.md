@@ -66,6 +66,7 @@ To see which apps are assigned to which ports:
       if you have routes use the following
       from werkzeug.middleware.proxy_fix import ProxyFix
       app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_prefix=1)
+      <base href="/app-name/"> use this in your html files to work with subpaths
 
 ## TODO
     if .env file is present use it.
