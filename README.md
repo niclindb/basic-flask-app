@@ -1,6 +1,6 @@
 # Universal Web App Deployment Script
 
-This script automates the deployment of Flask, FastAPI, Django, Node.js, and React apps on a Linux server.
+This script automates the deployment of Flask and React apps on a Linux server.
 
 ## Features
 - **Auto-Port Discovery**: Finds available ports for your app and webhook.
