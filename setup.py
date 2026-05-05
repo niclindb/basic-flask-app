@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
+from curses import echo
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-# ─────────────────────────────────────────────
-# UTILITIES
-# ─────────────────────────────────────────────
+# ───UTIL─────────────────────────────────────
 def run(cmd):
     print(f"> {cmd}")
     subprocess.run(cmd, shell=True, check=True)
@@ -26,9 +25,10 @@ def get_next_port(start):
                 return port
         port += 1
 
-# ─────────────────────────────────────────────
-# INPUT
-# ─────────────────────────────────────────────
+REGISTRY_DIR = Path("/etc/app-registry")
+REGISTRY_DIR.mkdir(exist_ok=True)
+
+# ─────INPUT────────────────────────────────────
 def get_input():
     app = input("App name: ").strip()
     print("\n1) Flask\n2) React\n3) Static")
@@ -43,9 +43,7 @@ def get_input():
 
     return app, mapping[choice], repo, user, secret
 
-# ─────────────────────────────────────────────
-# INSTALL
-# ─────────────────────────────────────────────
+    # ─────INSTALL────────────────────────────────────
 def install_dependencies(framework):
     run("apt update -qq")
     run("apt install -y git nginx curl python3 python3-venv python3-pip")
@@ -53,9 +51,8 @@ def install_dependencies(framework):
     if framework == "react":
         run("command -v node || (curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs)")
 
-# ─────────────────────────────────────────────
-# USER + REPO
-# ─────────────────────────────────────────────
+# ────USER────────────────────────────────
+
 def setup_user(user):
     run(f"id {user} || useradd -m -s /bin/bash {user}")
 
@@ -66,9 +63,7 @@ def setup_repo(repo, path, user):
         run(f"git clone {repo} {path}")
     run(f"chown -R {user}:{user} {path}")
 
-# ─────────────────────────────────────────────
-# FLASK
-# ─────────────────────────────────────────────
+# ────FLASK────────────────────────────────
 def setup_flask(app, path, user, port):
     venv = f"{path}/venv"
 
@@ -107,9 +102,7 @@ WantedBy=multi-user.target
 
     return deploy_cmd
 
-# ─────────────────────────────────────────────
-# REACT / STATIC
-# ─────────────────────────────────────────────
+# ─────REACT or STATIC──────────────────────────────
 def setup_react(path, user):
     run(f"cd {path} && sudo -u {user} npm install")
     run(f"cd {path} && sudo -u {user} npm run build")
@@ -177,38 +170,63 @@ WantedBy=multi-user.target
     run("systemctl daemon-reload")
     run(f"systemctl enable --now webhook-{app}")
 
-# ─────────────────────────────────────────────
-# NGINX
-# ─────────────────────────────────────────────
-def build_nginx(app, framework, value, webhook_port):
-    conf = f"""server {{
-    listen 80;
-    server_name _;
+# ──────NGINX────────────────────────────────
+def register_app(app, framework, value, webhook_port):
+    app_type = "proxy" if framework == "flask" else "static"
+    data = f"{app}:{app_type}:{value}:{webhook_port}"
+    (REGISTRY_DIR / app).write_text(data)
 
-    location /webhook-{app} {{
-        proxy_pass http://127.0.0.1:{webhook_port}/webhook;
-    }}
 
-    location /{app}/ {{
-"""
 
-    if framework == "flask":
-        conf += f"        proxy_pass http://127.0.0.1:{value}/;\n"
-    else:
-        conf += f"        alias {value}/;\n        try_files $uri $uri/ /index.html;\n"
+def build_nginx():
+    conf_path = Path("/etc/nginx/sites-available/app.conf")
 
-    conf += "    }\n}\n"
+    lines = [
+        "server {",
+        "    listen 80;",
+        "    server_name _;",
+        "    client_max_body_size 100M;",
+    ]
 
-    Path("/etc/nginx/sites-available/app.conf").write_text(conf)
+    for file in REGISTRY_DIR.glob("*"):
+        try:
+            name, app_type, value, webhook_port = file.read_text().strip().split(":")
 
-def enable_nginx():
-    run("ln -sf /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/app.conf")
-    run("rm -f /etc/nginx/sites-enabled/default")
+            # webhook route
+            lines += [
+                f"\n    location /webhook-{name} {{",
+                f"        proxy_pass http://127.0.0.1:{webhook_port}/webhook;",
+                "    }"
+            ]
+
+            # app route
+            lines += [f"\n    location /{name}/ {{"]
+
+            if app_type == "static":
+                lines += [
+                    f"        alias {value}/;",
+                    "        try_files $uri $uri/ /index.html;",
+                ]
+            else:
+                lines += [
+                    f"        proxy_pass http://127.0.0.1:{value}/;",
+                    "        proxy_set_header Host $host;",
+                    "        proxy_set_header X-Real-IP $remote_addr;",
+                ]
+
+            lines += ["    }"]
+
+        except Exception as e:
+            print(f"Skipping {file.name}: {e}")
+
+    lines += ["}"]
+
+    conf_path.write_text("\n".join(lines))
+
     run("nginx -t && systemctl reload nginx")
 
-# ─────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────
+
+# ──────MAIN────────────────────────────────────
 def main():
     require_root()
 
@@ -224,19 +242,27 @@ def main():
 
     if framework == "flask":
         deploy_cmd = setup_flask(app, app_dir, user, app_port)
-        build_nginx(app, framework, app_port, webhook_port)
+        register_app(app, framework, app_port, webhook_port)
     elif framework == "react":
         static_path, deploy_cmd = setup_react(app_dir, user)
-        build_nginx(app, framework, static_path, webhook_port)
+        register_app(app, framework, static_path, webhook_port)
     else:
         static_path, deploy_cmd = setup_static(app_dir)
-        build_nginx(app, framework, static_path, webhook_port)
+        register_app(app, framework, static_path, webhook_port)
 
     setup_webhook(app, user, secret, deploy_cmd, webhook_port)
-    enable_nginx()
 
-    print("\n✅ Deployment complete")
+    build_nginx()
+
+    print("\nDeployment complete")
     print(f"http://SERVER_IP/{app}/")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("To set up automatic deployment")
+    print("1. go to the repo settings")
+    print("2. Webhooks -> Add webhook")
+    print("3. paste URL, set content type to application/json, and paste the secret")
+    print("4. then add webhook")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
 if __name__ == "__main__":
     main()
