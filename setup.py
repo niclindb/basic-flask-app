@@ -5,53 +5,57 @@ import subprocess
 import sys
 from pathlib import Path
 
+# ─────────────────────────────────────────────
+# UTILITIES
+# ─────────────────────────────────────────────
 def run(cmd):
     print(f"> {cmd}")
-    # Using shell=True for complex piping, but be careful with untrusted input
     subprocess.run(cmd, shell=True, check=True)
 
 def require_root():
     if os.geteuid() != 0:
-        print("Error: This script must be run as root (sudo).")
+        print("This script must be run as root (sudo).")
         sys.exit(1)
 
 def get_next_port(start):
+    import socket
     port = start
     while True:
-        # Check if port is already listening
-        result = subprocess.run(f"ss -tuln | grep -q :{port}", shell=True)
-        if result.returncode != 0:
-            return port
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
         port += 1
 
-# ── INPUT ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# INPUT
+# ─────────────────────────────────────────────
 def get_input():
     app = input("App name: ").strip()
     print("\n1) Flask\n2) React\n3) Static")
-    choice = input("Choose framework (1-3): ").strip()
+    choice = input("Framework: ").strip()
     repo = input("GitHub repo URL: ").strip()
-    user = input("Linux user to own the app: ").strip()
-    secret = input("Webhook secret (for GitHub): ").strip()
+    user = input("Linux user: ").strip()
+    secret = input("Webhook secret: ").strip()
 
     mapping = {"1": "flask", "2": "react", "3": "static"}
     if choice not in mapping:
-        print("Invalid choice")
-        sys.exit(1)
+        sys.exit("Invalid choice")
 
     return app, mapping[choice], repo, user, secret
 
-# ── SETUP ────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# INSTALL
+# ─────────────────────────────────────────────
 def install_dependencies(framework):
     run("apt update -qq")
-    run("apt install -y git nginx curl python3 python3-pip python3-venv")
-
-    # Ensure Flask is available for the webhook script globally or in a safe place
-    run("pip3 install flask --break-system-packages || pip3 install flask")
+    run("apt install -y git nginx curl python3 python3-venv python3-pip")
 
     if framework == "react":
-        # Install Node.js if not present
         run("command -v node || (curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt install -y nodejs)")
 
+# ─────────────────────────────────────────────
+# USER + REPO
+# ─────────────────────────────────────────────
 def setup_user(user):
     run(f"id {user} || useradd -m -s /bin/bash {user}")
 
@@ -62,13 +66,16 @@ def setup_repo(repo, path, user):
         run(f"git clone {repo} {path}")
     run(f"chown -R {user}:{user} {path}")
 
-# ── FRAMEWORK SPECIFIC ───────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# FLASK
+# ─────────────────────────────────────────────
 def setup_flask(app, path, user, port):
     venv = f"{path}/venv"
+
     run(f"sudo -u {user} python3 -m venv {venv}")
-    
-    pip = f"sudo -u {user} {venv}/bin/pip"
-    run(f"{pip} install wheel flask gunicorn")
+
+    pip = f"{venv}/bin/pip"
+    run(f"{pip} install flask gunicorn")
 
     if Path(f"{path}/requirements.txt").exists():
         run(f"{pip} install -r {path}/requirements.txt")
@@ -87,31 +94,43 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 """
+
     Path(f"/etc/systemd/system/{app}.service").write_text(service)
     run("systemctl daemon-reload")
     run(f"systemctl enable --now {app}")
 
-    # Return the command the webhook will use to redeploy
-    return f"git -C {path} pull && {venv}/bin/pip install -r {path}/requirements.txt && sudo systemctl restart {app}"
+    deploy_cmd = (
+        f"git -C {path} pull && "
+        f"{venv}/bin/pip install -r {path}/requirements.txt || true && "
+        f"sudo /bin/systemctl restart {app}"
+    )
 
+    return deploy_cmd
+
+# ─────────────────────────────────────────────
+# REACT / STATIC
+# ─────────────────────────────────────────────
 def setup_react(path, user):
-    # Run npm as the specific user to avoid permission issues in build folders
-    run(f"cd {path} && sudo -u {user} npm install --silent")
-    run(f"cd {path} && sudo -u {user} npm run build --silent")
+    run(f"cd {path} && sudo -u {user} npm install")
+    run(f"cd {path} && sudo -u {user} npm run build")
 
-    static_path = f"{path}/dist" if Path(f"{path}/dist").exists() else f"{path}/build"
-    
-    deploy_cmd = f"git -C {path} pull && npm --prefix {path} install && npm --prefix {path} run build"
-    return static_path, deploy_cmd
+    deploy_cmd = (
+        f"git -C {path} pull && "
+        f"npm --prefix {path} install && "
+        f"npm --prefix {path} run build"
+    )
+
+    return f"{path}/build", deploy_cmd
 
 def setup_static(path):
     return path, f"git -C {path} pull"
 
-# ── WEBHOOK & PERMISSIONS ────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# WEBHOOK
+# ─────────────────────────────────────────────
 def setup_webhook(app, user, secret, deploy_cmd, port):
     script_path = f"/home/{user}/webhook-{app}.py"
-    
-    # We create a simple Flask listener for the GitHub Webhook
+
     code = f"""
 from flask import Flask, request
 import subprocess, hmac, hashlib
@@ -119,26 +138,30 @@ import subprocess, hmac, hashlib
 app = Flask(__name__)
 SECRET = b"{secret}"
 
+DEPLOY_CMD = "{deploy_cmd}"
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     sig = request.headers.get("X-Hub-Signature-256", "")
-    if not sig: return "No signature", 400
-    
+    if not sig:
+        return "No signature", 400
+
     expected = "sha256=" + hmac.new(SECRET, request.data, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         return "Forbidden", 403
-    
-    subprocess.Popen(["/bin/bash", "-c", "{deploy_cmd}"])
+
+    subprocess.Popen(["/bin/bash", "-c", DEPLOY_CMD])
     return "Deployment started", 200
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port={port})
 """
+
     Path(script_path).write_text(code)
     run(f"chown {user}:{user} {script_path}")
 
     service = f"""[Unit]
-Description=Webhook for {app}
+Description=Webhook {app}
 After=network.target
 
 [Service]
@@ -149,76 +172,43 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 """
+
     Path(f"/etc/systemd/system/webhook-{app}.service").write_text(service)
     run("systemctl daemon-reload")
     run(f"systemctl enable --now webhook-{app}")
 
-    # Allow the user to restart the specific app service without a password
-    sudoers_file = f"/etc/sudoers.d/{user}"
-    run(f'echo "{user} ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart {app}" > {sudoers_file}')
-    run(f"chmod 440 {sudoers_file}")
+# ─────────────────────────────────────────────
+# NGINX
+# ─────────────────────────────────────────────
+def build_nginx(app, framework, value, webhook_port):
+    conf = f"""server {{
+    listen 80;
+    server_name _;
 
-# ── NGINX CONFIGURATION ──────────────────────────────────────────────────────
-def register_app(app, framework, value, webhook_port):
-    """Saves app info so Nginx can rebuild the unified config."""
-    registry = Path("/etc/app-registry")
-    registry.mkdir(exist_ok=True)
-    
-    type_ = "proxy" if framework == "flask" else "static"
-    content = f"{app}:{type_}:{value}:{webhook_port}"
-    Path(registry / app).write_text(content)
+    location /webhook-{app} {{
+        proxy_pass http://127.0.0.1:{webhook_port}/webhook;
+    }}
 
-def build_nginx():
-    registry = Path("/etc/app-registry")
-    conf_path = Path("/etc/nginx/sites-available/unified.conf")
+    location /{app}/ {{
+"""
 
-    lines = [
-        "server {",
-        "    listen 80 default_server;",
-        "    server_name _;",
-        "    client_max_body_size 100M;"
-    ]
+    if framework == "flask":
+        conf += f"        proxy_pass http://127.0.0.1:{value}/;\n"
+    else:
+        conf += f"        alias {value}/;\n        try_files $uri $uri/ /index.html;\n"
 
-    for file in registry.glob("*"):
-        try:
-            name, type_, val, wport = file.read_text().strip().split(":")
-            
-            # Webhook Location
-            lines += [
-                f"\n    location /webhook-{name} {{",
-                f"        proxy_pass http://127.0.0.1:{wport}/webhook;",
-                "    }"
-            ]
-            
-            # App Location
-            lines += [f"\n    location /{name}/ {{"]
-            if type_ == "static":
-                lines += [
-                    f"        alias {val}/;",
-                    "        try_files $uri $uri/ /index.html;",
-                ]
-            else:
-                lines += [
-                    f"        proxy_pass http://127.0.0.1:{val}/;",
-                    "        proxy_set_header Host $host;",
-                    "        proxy_set_header X-Real-IP $remote_addr;"
-                ]
-            lines += ["    }"]
-        except Exception as e:
-            print(f"Skipping {file.name} due to error: {e}")
+    conf += "    }\n}\n"
 
-    lines += ["}\n"]
-    conf_path.write_text("\n".join(lines))
+    Path("/etc/nginx/sites-available/app.conf").write_text(conf)
 
 def enable_nginx():
-    enabled_path = "/etc/nginx/sites-enabled/unified.conf"
-    if not os.path.exists(enabled_path):
-        run(f"ln -s /etc/nginx/sites-available/unified.conf {enabled_path}")
-    
+    run("ln -sf /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/app.conf")
     run("rm -f /etc/nginx/sites-enabled/default")
     run("nginx -t && systemctl reload nginx")
 
-# ── MAIN ─────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────
 def main():
     require_root()
 
@@ -234,21 +224,19 @@ def main():
 
     if framework == "flask":
         deploy_cmd = setup_flask(app, app_dir, user, app_port)
-        register_app(app, framework, app_port, webhook_port)
+        build_nginx(app, framework, app_port, webhook_port)
     elif framework == "react":
         static_path, deploy_cmd = setup_react(app_dir, user)
-        register_app(app, framework, static_path, webhook_port)
+        build_nginx(app, framework, static_path, webhook_port)
     else:
         static_path, deploy_cmd = setup_static(app_dir)
-        register_app(app, framework, static_path, webhook_port)
+        build_nginx(app, framework, static_path, webhook_port)
 
     setup_webhook(app, user, secret, deploy_cmd, webhook_port)
-    build_nginx()
     enable_nginx()
 
-    print(f"\n✅ Deployment complete for {app}")
-    print(f"🌍 App:     http://<your-server-ip>/{app}/")
-    print(f"⚓ Webhook: http://<your-server-ip>/webhook-{app}")
+    print("\n✅ Deployment complete")
+    print(f"http://SERVER_IP/{app}/")
 
 if __name__ == "__main__":
     main()
