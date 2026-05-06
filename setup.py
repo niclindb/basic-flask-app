@@ -23,8 +23,10 @@ def get_next_port(start):
     if registry.exists():
         for file in registry.glob("*"):
             try:
-                _, _, _, port = file.read_text().strip().split(":")
-                used_ports.add(int(port))
+                _, _, a, b = file.read_text().strip().split(":")
+                
+                used_ports.add(int(a))
+                used_ports.add(int(b))
             except:
                 continue
 
@@ -33,6 +35,7 @@ def get_next_port(start):
         port += 1
 
     return port
+
 REGISTRY_DIR = Path("/etc/app-registry")
 REGISTRY_DIR.mkdir(exist_ok=True)
 
