@@ -17,14 +17,22 @@ def require_root():
         sys.exit(1)
 
 def get_next_port(start):
-    import socket
+    used_ports = set()
+
+    registry = Path("/etc/app-registry")
+    if registry.exists():
+        for file in registry.glob("*"):
+            try:
+                _, _, _, port = file.read_text().strip().split(":")
+                used_ports.add(int(port))
+            except:
+                continue
+
     port = start
-    while True:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
-                return port
+    while port in used_ports:
         port += 1
 
+    return port
 REGISTRY_DIR = Path("/etc/app-registry")
 REGISTRY_DIR.mkdir(exist_ok=True)
 
