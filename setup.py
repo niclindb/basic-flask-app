@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from curses import echo
 import os
 import subprocess
 import sys
@@ -55,6 +54,7 @@ def get_input():
     return app, mapping[choice], repo, user, secret
 
     # ─────INSTALL────────────────────────────────────
+
 def install_dependencies(framework):
     run("apt update -qq")
     run("apt install -y git nginx curl python3 python3-venv python3-pip")
@@ -129,9 +129,7 @@ def setup_react(path, user):
 def setup_static(path):
     return path, f"git -C {path} pull"
 
-# ─────────────────────────────────────────────
-# WEBHOOK
-# ─────────────────────────────────────────────
+# ────WEBHOOK────────────────────────────────
 def setup_webhook(app, user, secret, deploy_cmd, port):
     script_path = f"/home/{user}/webhook-{app}.py"
 
@@ -236,6 +234,11 @@ def build_nginx():
 
     run("nginx -t && systemctl reload nginx")
 
+def enable_nginx():
+    run("rm -f /etc/nginx/sites-enabled/default")
+    run("ln -sf /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/app.conf")
+    run("nginx -t && systemctl reload nginx")
+
 
 # ──────MAIN────────────────────────────────────
 def main():
@@ -264,6 +267,7 @@ def main():
     setup_webhook(app, user, secret, deploy_cmd, webhook_port)
 
     build_nginx()
+    enable_nginx()
 
     print("\nDeployment complete")
     print(f"http://SERVER_IP/{app}/")
